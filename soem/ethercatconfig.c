@@ -166,8 +166,8 @@ static void ecx_set_slaves_to_default(ecx_contextt *context)
    ecx_BWR(context->port, 0x0000, ECT_REG_RXERR       , 8         , &zbuf, EC_TIMEOUTRET3);  /* reset CRC counters */
    ecx_BWR(context->port, 0x0000, ECT_REG_FMMU0       , 16 * 3    , &zbuf, EC_TIMEOUTRET3);  /* reset FMMU's */
    ecx_BWR(context->port, 0x0000, ECT_REG_SM0         , 8 * 4     , &zbuf, EC_TIMEOUTRET3);  /* reset SyncM */
-   b = 0x00; 
-   ecx_BWR(context->port, 0x0000, ECT_REG_DCSYNCACT   , sizeof(b) , &b, EC_TIMEOUTRET3);     /* reset activation register */ 
+   b = 0x00;
+   ecx_BWR(context->port, 0x0000, ECT_REG_DCSYNCACT   , sizeof(b) , &b, EC_TIMEOUTRET3);     /* reset activation register */
    ecx_BWR(context->port, 0x0000, ECT_REG_DCSYSTIME   , 4         , &zbuf, EC_TIMEOUTRET3);  /* reset system time+ofs */
    w = htoes(0x1000);
    ecx_BWR(context->port, 0x0000, ECT_REG_DCSPEEDCNT  , sizeof(w) , &w, EC_TIMEOUTRET3);     /* DC speedstart */
@@ -654,6 +654,9 @@ static int ecx_map_coe_soe(ecx_contextt *context, uint16 slave, int thread_n)
          rval = 0;
          if (context->slavelist[slave].CoEdetails & ECT_COEDET_SDOCA) /* has Complete Access */
          {
+             /* do not apply this if Elmo product is found */
+             if ((context->slavelist[slave].eep_man != 0x0009A) &&
+                 (context->slavelist[slave].eep_id != 0x30924))
             /* read PDO mapping via CoE and use Complete Access */
             rval = ecx_readPDOmapCA(context, slave, thread_n, &Osize, &Isize);
          }
@@ -875,7 +878,7 @@ static void ecx_config_find_mappings(ecx_contextt *context, uint8 group)
    }
 }
 
-static void ecx_config_create_input_mappings(ecx_contextt *context, void *pIOmap, 
+static void ecx_config_create_input_mappings(ecx_contextt *context, void *pIOmap,
    uint8 group, int16 slave, uint32 * LogAddr, uint8 * BitPos)
 {
    int BitCount = 0;
@@ -1002,7 +1005,7 @@ static void ecx_config_create_input_mappings(ecx_contextt *context, void *pIOmap
    context->slavelist[slave].FMMUunused = FMMUc;
 }
 
-static void ecx_config_create_output_mappings(ecx_contextt *context, void *pIOmap, 
+static void ecx_config_create_output_mappings(ecx_contextt *context, void *pIOmap,
    uint8 group, int16 slave, uint32 * LogAddr, uint8 * BitPos)
 {
    int BitCount = 0;
@@ -1220,7 +1223,7 @@ int ecx_config_map_group(ecx_contextt *context, void *pIOmap, uint8 group)
             /* create input mapping */
             if (context->slavelist[slave].Ibits)
             {
- 
+
                ecx_config_create_input_mappings(context, pIOmap, group, slave, &LogAddr, &BitPos);
                diff = LogAddr - oLogAddr;
                oLogAddr = LogAddr;
@@ -1319,7 +1322,7 @@ int ecx_config_overlap_map_group(ecx_contextt *context, void *pIOmap, uint8 grou
 
       /* Find mappings and program syncmanagers */
       ecx_config_find_mappings(context, group);
-      
+
       /* do IO mapping of slave and program FMMUs */
       for (slave = 1; slave <= *(context->slavecount); slave++)
       {
@@ -1331,8 +1334,8 @@ int ecx_config_overlap_map_group(ecx_contextt *context, void *pIOmap, uint8 grou
             /* create output mapping */
             if (context->slavelist[slave].Obits)
             {
-               
-               ecx_config_create_output_mappings(context, pIOmap, group, 
+
+               ecx_config_create_output_mappings(context, pIOmap, group,
                   slave, &soLogAddr, &BitPos);
                if (BitPos)
                {
@@ -1344,7 +1347,7 @@ int ecx_config_overlap_map_group(ecx_contextt *context, void *pIOmap, uint8 grou
             /* create input mapping */
             if (context->slavelist[slave].Ibits)
             {
-               ecx_config_create_input_mappings(context, pIOmap, group, 
+               ecx_config_create_input_mappings(context, pIOmap, group,
                   slave, &siLogAddr, &BitPos);
                if (BitPos)
                {

@@ -2,6 +2,14 @@ cmake_minimum_required(VERSION 2.8.4)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules")
 project(SOEM C)
 
+option(RELEASE_BUILD "-O3, dont use this option with -g3 at the same time" OFF)
+
+if (RELEASE_BUILD)
+  add_definitions(-O3)
+else()
+  add_definitions(-g3)
+endif ()
+
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
   # Default to installing in SOEM source directory
   set(CMAKE_INSTALL_PREFIX ${CMAKE_SOURCE_DIR}/install)
@@ -60,7 +68,7 @@ include_directories(osal)
 include_directories(osal/${OS})
 include_directories(oshw/${OS})
 
-add_library(soem STATIC
+add_library(soem SHARED
   ${SOEM_SOURCES}
   ${OSAL_SOURCES}
   ${OSHW_SOURCES}
@@ -76,7 +84,7 @@ install(FILES
   ${OSHW_HEADERS}
   DESTINATION ${SOEM_INCLUDE_INSTALL_DIR})
 
-if(BUILD_TESTS) 
+if(BUILD_TESTS)
   add_subdirectory(test/linux/slaveinfo)
   add_subdirectory(test/linux/eepromtool)
   add_subdirectory(test/linux/simple_test)
