@@ -11,6 +11,7 @@
 #ifndef _ethercatmain_
 #define _ethercatmain_
 
+#include <semaphore.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -423,6 +424,28 @@ typedef struct ecx_context
    int            (*FOEhook)(uint16 slave, int packetnumber, int datasize);
 } ecx_contextt;
 
+/** sdo recieve callback funtion prototype */
+typedef void (*sdo_recieve_callback_t) (sem_t *pmutex,
+                                        sem_t *pwkcsem,
+                                        int wkc);
+
+/** sdo datagram data type */
+typedef struct ec_sdo_datagram
+{
+   sdo_recieve_callback_t pcallback;
+   sem_t *pmutex;
+   sem_t *pwkcsem;
+   int bufidx;
+} ec_sdo_datagramt;
+
+/** ringbuf for sdo datagram */
+typedef struct ec_sdo_datagram_ring_buf
+{
+   int16 head;
+   int16 tail;
+   ec_sdo_datagramt datagram[EC_MAXELIST + 1];
+} ec_sdo_datagram_ring_buft;
+
 #ifdef EC_VER1
 /** global struct to hold default master context */
 extern ecx_contextt  ecx_context;
@@ -514,6 +537,11 @@ int ecx_receive_processdata_group(ecx_contextt *context, uint8 group, int timeou
 int ecx_send_processdata(ecx_contextt *context);
 int ecx_send_overlap_processdata(ecx_contextt *context);
 int ecx_receive_processdata(ecx_contextt *context, int timeout);
+ec_sdo_datagramt *pop_a_sdo_datagram();
+void push_a_sdo_datagram(sdo_recieve_callback_t pcallback,
+                         sem_t *pmutex,
+                         sem_t *pwkcsem,
+                         int bufidx);
 
 #ifdef __cplusplus
 }

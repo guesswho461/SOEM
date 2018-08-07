@@ -3,6 +3,11 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules")
 project(SOEM C)
 
 option(RELEASE_BUILD "-O3, dont use this option with -g3 at the same time" OFF)
+option(DEBUG_PRINT "print debug msg" OFF)
+
+if (DEBUG_PRINT)
+add_definitions(-DEC_DEBUG)
+endif ()
 
 if (RELEASE_BUILD)
   add_definitions(-O3)

@@ -99,6 +99,10 @@ int64                   ec_DCtime;
 ecx_portt               ecx_port;
 ecx_redportt            ecx_redport;
 
+static ec_sdo_datagram_ring_buft sdo_datagram_ring_buf;
+static boolean cansendsdodatagram = TRUE;
+static ec_sdo_datagramt *psdodatagram = NULL;
+
 ecx_contextt  ecx_context = {
     &ecx_port,          // .port          =
     &ec_slave[0],       // .slavelist     =
@@ -744,7 +748,7 @@ int ecx_readstate(ecx_contextt *context)
    {
       noerrorflag = TRUE;
       context->slavelist[0].ALstatuscode = 0;
-   }   
+   }
    else
    {
       noerrorflag = FALSE;
@@ -764,7 +768,7 @@ int ecx_readstate(ecx_contextt *context)
          allslavessamestate = FALSE;
          break;
    }
-    
+
    if (noerrorflag && allslavessamestate && allslavespresent)
    {
       /* No slave has toggled the error flag so the alstatuscode
@@ -817,7 +821,7 @@ int ecx_readstate(ecx_contextt *context)
       } while (lslave < *(context->slavecount));
       context->slavelist[0].state = lowest;
    }
-  
+
    return lowest;
 }
 
@@ -836,14 +840,14 @@ int ecx_writestate(ecx_contextt *context, uint16 slave)
    {
       slstate = htoes(context->slavelist[slave].state);
       ret = ecx_BWR(context->port, 0, ECT_REG_ALCTL, sizeof(slstate),
-	            &slstate, EC_TIMEOUTRET3);
+                &slstate, EC_TIMEOUTRET3);
    }
    else
    {
       configadr = context->slavelist[slave].configadr;
 
       ret = ecx_FPWRw(context->port, configadr, ECT_REG_ALCTL,
-	        htoes(context->slavelist[slave].state), EC_TIMEOUTRET3);
+            htoes(context->slavelist[slave].state), EC_TIMEOUTRET3);
    }
    return ret;
 }
@@ -946,7 +950,7 @@ int ecx_mbxempty(ecx_contextt *context, uint16 slave, int timeout)
          osal_usleep(EC_LOCALDELAY);
       }
    }
-   while (((wkc <= 0) || ((SMstat & 0x08) != 0)) && (osal_timer_is_expired(&timer) == FALSE));
+   while (((wkc <= 0) || ((SMstat & 0x08) != 0))/* && (osal_timer_is_expired(&timer) == FALSE)*/);
 
    if ((wkc > 0) && ((SMstat & 0x08) == 0))
    {
@@ -1647,9 +1651,9 @@ static int ecx_pullindex(ecx_contextt *context)
    return rval;
 }
 
-/** 
+/**
  * Clear the idx stack.
- * 
+ *
  * @param context           = context struct
  */
 static void ecx_clearindex(ecx_contextt *context)  {
@@ -1703,7 +1707,7 @@ static int ecx_main_send_processdata(ecx_contextt *context, uint8 group, boolean
       length = context->grouplist[group].Obytes + context->grouplist[group].Ibytes;
       iomapinputoffset = 0;
    }
-   
+
    LogAdr = context->grouplist[group].logstartaddr;
    if(length)
    {
@@ -1826,18 +1830,32 @@ static int ecx_main_send_processdata(ecx_contextt *context, uint8 group, boolean
             /* send frame */
             ecx_outframe_red(context->port, idx);
             /* push index and data pointer on stack.
-             * the iomapinputoffset compensate for where the inputs are stored 
+             * the iomapinputoffset compensate for where the inputs are stored
              * in the IOmap if we use an overlapping IOmap. If a regular IOmap
              * is used it should always be 0.
              */
-            ecx_pushindex(context, idx, (data + iomapinputoffset), sublength);      
+            ecx_pushindex(context, idx, (data + iomapinputoffset), sublength);
             length -= sublength;
             LogAdr += sublength;
             data += sublength;
          } while (length && (currentsegment < context->grouplist[group].nsegments));
       }
    }
-
+   //transmit a sdo datagram from sdo datagram ring buffer
+   //send one sdo datagram per time
+   if(is_sdo_interweave_2_pdo() == TRUE)
+   {
+   if(cansendsdodatagram == TRUE)
+   {
+     psdodatagram = pop_a_sdo_datagram();
+     if(psdodatagram)
+     {
+       ecx_outframe_red(context->port, psdodatagram->bufidx);
+       ecx_pushindex(context, psdodatagram->bufidx, NULL, 0);
+       cansendsdodatagram = FALSE;
+     }
+   }
+   }
    return wkc;
 }
 
@@ -1943,6 +1961,22 @@ int ecx_receive_processdata_group(ecx_contextt *context, uint8 group, int timeou
                wkc += wkc2 * 2;
             }
             valid_wkc = 1;
+         }
+         else //this should happen when sdo datagram came back
+         {
+             if(is_sdo_interweave_2_pdo() == TRUE)
+             {
+             if(cansendsdodatagram == FALSE)
+             {
+                 if (psdodatagram->pcallback)
+                 {
+                   (*psdodatagram->pcallback)(psdodatagram->pmutex,
+                                              psdodatagram->pwkcsem,
+                                              wkc2);
+                 }
+                 cansendsdodatagram = TRUE;
+             }
+             }
          }
       }
       /* release buffer */
@@ -2373,3 +2407,40 @@ int ec_receive_processdata(int timeout)
    return ec_receive_processdata_group(0, timeout);
 }
 #endif
+
+ec_sdo_datagramt *pop_a_sdo_datagram()
+{
+    boolean notempty = (sdo_datagram_ring_buf.head != sdo_datagram_ring_buf.tail);
+    ec_sdo_datagramt *pdatagram = &sdo_datagram_ring_buf.datagram[sdo_datagram_ring_buf.tail];
+    if (notempty)
+    {
+       sdo_datagram_ring_buf.tail++;
+       if (sdo_datagram_ring_buf.tail > EC_MAXELIST)
+       {
+          sdo_datagram_ring_buf.tail = 0;
+       }
+    }
+    return pdatagram;
+}
+
+void push_a_sdo_datagram(sdo_recieve_callback_t pcallback,
+                         sem_t *pmutex,
+                         sem_t *pwkcsem,
+                         int bufidx)
+{
+    ec_sdo_datagramt datagram = {pcallback, pmutex, pwkcsem, bufidx};
+    sdo_datagram_ring_buf.datagram[sdo_datagram_ring_buf.head] = datagram;
+    sdo_datagram_ring_buf.head++;
+    if (sdo_datagram_ring_buf.head > EC_MAXELIST)
+    {
+       sdo_datagram_ring_buf.head = 0;
+    }
+    if (sdo_datagram_ring_buf.head == sdo_datagram_ring_buf.tail)
+    {
+       sdo_datagram_ring_buf.tail++;
+    }
+    if (sdo_datagram_ring_buf.tail > EC_MAXELIST)
+    {
+       sdo_datagram_ring_buf.tail = 0;
+    }
+}

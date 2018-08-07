@@ -43,6 +43,7 @@
 #include <string.h>
 #include <netpacket/packet.h>
 #include <pthread.h>
+#include <semaphore.h>
 
 #include "oshw.h"
 #include "osal.h"
@@ -71,6 +72,8 @@ const uint16 secMAC[3] = { 0x0404, 0x0404, 0x0404 };
 #define RX_PRIM priMAC[1]
 /** second MAC word is used for identification */
 #define RX_SEC secMAC[1]
+
+static boolean interweavesdo2pdo = FALSE;
 
 static void ecx_clear_rxbufstat(int *rxbufstat)
 {
@@ -553,6 +556,15 @@ int ecx_waitinframe(ecx_portt *port, int idx, int timeout)
    return wkc;
 }
 
+static void srcconfirm_callback(sem_t *pmutex,
+                                sem_t *pwkcsem,
+                                int wkc)
+{
+  sem_init(pwkcsem, 0, wkc);
+//  sem_post(pmutex);
+  sem_init(pmutex, 0, 1);
+}
+
 /** Blocking send and recieve frame function. Used for non processdata frames.
  * A datagram is build into a frame and transmitted via this function. It waits
  * for an answer and returns the workcounter. The function retries if time is
@@ -567,12 +579,13 @@ int ecx_waitinframe(ecx_portt *port, int idx, int timeout)
  */
 int ecx_srconfirm(ecx_portt *port, int idx, int timeout)
 {
-   int wkc = EC_NOFRAME;
-   osal_timert timer1, timer2;
-
-   osal_timer_start (&timer1, timeout);
-   do
-   {
+  int wkc = EC_NOFRAME;
+  if(interweavesdo2pdo == FALSE)
+  {
+    osal_timert timer1, timer2;
+    osal_timer_start (&timer1, timeout);
+    do
+    {
       /* tx frame on primary and if in redundant mode a dummy on secondary */
       ecx_outframe_red(port, idx);
       if (timeout < EC_TIMEOUTRET)
@@ -586,15 +599,53 @@ int ecx_srconfirm(ecx_portt *port, int idx, int timeout)
       }
       /* get frame from primary or if in redundant mode possibly from secondary */
       wkc = ecx_waitinframe_red(port, idx, &timer2);
-   /* wait for answer with WKC>=0 or otherwise retry until timeout */
-   } while ((wkc <= EC_NOFRAME) && !osal_timer_is_expired (&timer1));
-   /* if nothing received, clear buffer index status so it can be used again */
-   if (wkc <= EC_NOFRAME)
-   {
+    /* wait for answer with WKC>=0 or otherwise retry until timeout */
+    } while ((wkc <= EC_NOFRAME) && !osal_timer_is_expired (&timer1));
+    /* if nothing received, clear buffer index status so it can be used again */
+    if (wkc <= EC_NOFRAME)
+    {
       ecx_setbufstat(port, idx, EC_BUF_EMPTY);
-   }
+    }
+  }
+  else
+  {
+    //put the sdo datagram into sdo datagram ring buffer and
+    //wait for callback to continue
+    //try to interweave sdo into pdo traffic
+    //the reason of using sem instead of mutex is that this function and callback
+    //will be executed by different thread
+    sem_t callbackmutex;
+    sem_t wcksem; //this sem will be initialized in the callback, in order to pass wkc back
+//    sem_init(&callbackmutex, 0, 0);
+    push_a_sdo_datagram(&srcconfirm_callback,
+                      &callbackmutex,
+                      &wcksem,
+                      idx);
+//    struct timespec semtimeout;
+//    clock_gettime(CLOCK_MONOTONIC, &semtimeout);
+//    semtimeout.tv_sec += (timeout * 1000000);
+//    semtimeout.tv_nsec += (timeout * 1000000); //us to ns
+//    int rt = sem_timedwait(&callbackmutex, &semtimeout);
+    int rt = sem_wait(&callbackmutex);
+    if (rt == 0)
+    {
+    sem_getvalue(&wcksem, &wkc);
+    }
+    else
+    {
+    ecx_setbufstat(port, idx, EC_BUF_EMPTY);
+    }
+  }
+  return wkc;
+}
 
-   return wkc;
+void interweave_sdo2pdo(boolean interweave) {
+    interweavesdo2pdo = interweave;
+}
+
+boolean is_sdo_interweave_2_pdo()
+{
+    return interweavesdo2pdo;
 }
 
 #ifdef EC_VER1
